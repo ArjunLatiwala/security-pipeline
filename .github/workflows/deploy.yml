@@ -17,7 +17,7 @@ jobs:
         with:
           host: ${{ secrets.GCP_VM_IP }}
           # REPLACE 'your-username' with the name found at the end of your .pub key
-          username: local 
+          username: creolemacmini02 
           key: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
           script: |
             # If the folder doesn't exist, clone it. If it does, just update it.
