@@ -1,78 +1,89 @@
 #!/bin/bash
-set -e # Exit if any command fails
+set -e
 
 echo "===================================================="
-echo "🚀 STARTING SECURITY STACK INSTALLATION/CHECK"
+echo "🚀 STARTING LATEST SECURITY STACK INSTALLATION"
 echo "===================================================="
 
 # --- 1. SWAP MEMORY ---
-echo "--- [STEP 1/5] VERIFYING SWAP MEMORY (4GB) ---"
+echo "--- [STEP 1/5] VERIFYING 4GB SWAP ---"
 if [ -z "$(swapon --show)" ]; then
-    echo ">> Creating 4GB Swap..."
-    sudo fallocate -l 4G /swapfile
-    sudo chmod 600 /swapfile
-    sudo mkswap /swapfile
-    sudo swapon /swapfile
+    sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile
+    sudo mkswap /swapfile && sudo swapon /swapfile
     echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab
-    echo ">> ✅ Swap created successfully."
+    echo ">> ✅ Swap created."
 else
     echo ">> ✅ Swap already present."
 fi
-free -h
 
-# --- 2. DOCKER & COMPOSE ---
+# --- 2. DOCKER ---
 echo "--- [STEP 2/5] VERIFYING DOCKER & COMPOSE ---"
-if ! command -v docker &> /dev/null; then
-    echo ">> Installing Docker..."
-    curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh
-fi
-# Ensure Docker Compose Plugin is installed (Needed for DefectDojo)
-sudo apt-get update && sudo apt-get install -y docker-compose-plugin
-echo ">> ✅ Docker version: $(docker --version)"
+sudo apt-get update && sudo apt-get install -y docker-compose-plugin git
+echo ">> ✅ Docker: $(docker --version)"
 
-# --- 3. SONARQUBE ---
-echo "--- [STEP 3/5] VERIFYING SONARQUBE ---"
+# --- 3. SONARQUBE (LATEST COMMUNITY) ---
+echo "--- [STEP 3/5] VERIFYING SONARQUBE (LATEST) ---"
 sudo sysctl -w vm.max_map_count=262144
 if [ -z "$(sudo docker ps -q --filter "name=sonarqube")" ]; then
-    echo ">> Starting SonarQube Container..."
+    echo ">> Starting SonarQube Community Edition..."
     sudo docker rm -f sonarqube > /dev/null 2>&1 || true
-    sudo docker run -d --name sonarqube --restart always -p 9000:9000 sonarqube:lts-community
+    # Using :community ensures you get the latest active stable version
+    sudo docker run -d --name sonarqube --restart always -p 9000:9000 sonarqube:community
     echo ">> ✅ SonarQube started."
 else
-    echo ">> ✅ SonarQube is already running."
+    echo ">> ✅ SonarQube is running."
 fi
 
-# --- 4. DEFECTDOJO ---
+# --- 4. DEFECTDOJO (LATEST FROM REPO) ---
 echo "--- [STEP 4/5] VERIFYING DEFECTDOJO ---"
 if [ ! -d "/opt/defectdojo" ]; then
-    echo ">> Cloning DefectDojo..."
-    sudo git clone https://github.com/DefectDojo/django-DefectDojo /opt/defectdojo
+    sudo git clone --depth 1 https://github.com/DefectDojo/django-DefectDojo /opt/defectdojo
 fi
 
 if [ -z "$(sudo docker ps -q --filter "name=uwsgi")" ]; then
-    echo ">> Starting DefectDojo (This pulls many images, please wait)..."
+    echo ">> Starting DefectDojo..."
     cd /opt/defectdojo
-    # We use 'docker compose' directly for better logs
-    sudo docker compose --progress plain --profile mysql-rabbit up -d
-    echo ">> ✅ DefectDojo containers initiated."
+    sudo docker compose --profile mysql-rabbit up -d
+    echo ">> ✅ DefectDojo started."
 else
-    echo ">> ✅ DefectDojo is already running."
+    echo ">> ✅ DefectDojo is running."
 fi
 
-# --- 5. NVD DEPENDENCY CHECK ---
-echo "--- [STEP 5/5] VERIFYING NVD DEPENDENCY CHECK ---"
-if [ ! -f "/usr/local/bin/dependency-check" ]; then
-    echo ">> Downloading Dependency Check Binary..."
-    sudo apt-get install -y unzip openjdk-17-jre-headless wget
-    wget https://github.com/jeremylong/DependencyCheck/releases/download/v9.0.9/dependency-check-9.0.9-release.zip -P /tmp
-    sudo unzip -o /tmp/dependency-check-9.0.9-release.zip -d /opt/
-    sudo ln -sf /opt/dependency-check/bin/dependency-check.sh /usr/local/bin/dependency-check
-    echo ">> ✅ Dependency Check installed."
-else
-    echo ">> ✅ Dependency Check already present."
+# --- [STEP 5/5] VERIFYING NVD DEPENDENCY CHECK (12.0.1) ---
+echo "--- [STEP 5/5] VERIFYING DEPENDENCY CHECK & NVD DATABASE ---"
+
+# 1. Upgrade Engine if version is old
+if [[ -f "/usr/local/bin/dependency-check" ]] && [[ ! $(dependency-check --version) == *"12.0.1"* ]]; then
+    echo ">> Old version detected. Removing to upgrade..."
+    sudo rm -rf /opt/dependency-check /usr/local/bin/dependency-check
 fi
+
+# 2. Install Engine (if missing)
+if [ ! -f "/usr/local/bin/dependency-check" ]; then
+    echo ">> Downloading Dependency Check Engine 12.0.1..."
+    sudo apt-get install -y unzip openjdk-17-jre-headless wget
+    wget https://github.com/jeremylong/DependencyCheck/releases/download/v12.0.1/dependency-check-12.0.1-release.zip -P /tmp
+    sudo unzip -o /tmp/dependency-check-12.0.1-release.zip -d /opt/
+    sudo ln -sf /opt/dependency-check/bin/dependency-check.sh /usr/local/bin/dependency-check
+    echo ">> ✅ Engine installed."
+fi
+
+# 3. INITIALIZE/UPDATE WHOLE NVD DATABASE
+# We check if the data directory is empty. If it is, we do a full sync.
+DATA_DIR="/opt/dependency-check/data"
+if [ ! -d "$DATA_DIR" ] || [ -z "$(ls -A $DATA_DIR)" ]; then
+    echo ">> 📥 NVD Database not found. Downloading the WHOLE database now..."
+    echo ">> This step can take 20-30 minutes. Please do not cancel the pipeline."
+    dependency-check --updateonly
+    echo ">> ✅ NVD Database fully synchronized."
+else
+    echo ">> ✅ NVD Database present. (Robot will sync small daily updates in background)."
+    # Optional: run a quick update check
+    dependency-check --updateonly
+fi
+
 dependency-check --version
 
 echo "===================================================="
-echo "🎉 ALL SYSTEMS VERIFIED AND RUNNING"
+echo "🎉 ALL SYSTEMS UP TO DATE"
 echo "===================================================="
