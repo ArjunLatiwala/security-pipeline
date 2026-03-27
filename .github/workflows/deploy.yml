@@ -19,17 +19,21 @@ jobs:
           username: creolemacmini02 
           key: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
           script: |
-            # 1. Prepare Server
+            # 1. Prepare Server (Install Git if missing)
             sudo apt-get update && sudo apt-get install -y git
             
-            # 2. Update code folder
+            # 2. Force-Sync code folder from GitHub
             if [ ! -d "security-pipeline" ]; then
               git clone https://github.com/${{ github.repository }}.git
             fi
+            
             cd security-pipeline
-            git pull origin main
+            
+            # This part fixes the 'merge conflict' error by overwriting local changes
+            git fetch origin main
+            git reset --hard origin/main
 
-            # 3. Setup the Self-Healing Trigger
+            # 3. Setup the Self-Healing Trigger (Registers Systemd)
             chmod +x setup.sh
             sudo ./setup.sh
 
