@@ -53,7 +53,7 @@ if [ -z "$(sudo docker ps -q --filter "name=uwsgi")" ]; then
     echo ">> Starting DefectDojo (This pulls many images, please wait)..."
     cd /opt/defectdojo
     # We use 'docker compose' directly for better logs
-    sudo docker compose --profile mysql-rabbit up -d --progress plain
+    sudo docker compose --progress plain --profile mysql-rabbit up -d
     echo ">> ✅ DefectDojo containers initiated."
 else
     echo ">> ✅ DefectDojo is already running."
