@@ -1,0 +1,6 @@
+[Unit]
+Description=Security Stack Self-Healing Service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/health-check.sh

@@ -1,0 +1,30 @@
+name: Deploy Security Stack to GCP
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Execute Setup Script on GCP via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.GCP_VM_IP }}
+          # REPLACE 'your-username' with the name found at the end of your .pub key
+          username: local 
+          key: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
+          script: |
+            # If the folder doesn't exist, clone it. If it does, just update it.
+            if [ ! -d "security-pipeline" ]; then
+              git clone https://github.com/${{ github.repository }}.git
+            fi
+            cd security-pipeline
+            git pull origin main
+            chmod +x setup.sh
+            sudo ./setup.sh
