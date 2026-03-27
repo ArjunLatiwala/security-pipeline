@@ -1,5 +1,3 @@
----
-
 # 🛡️ Self-Healing Security Pipeline (GCP)
 
 This project automates the deployment of **SonarQube**, **DefectDojo**, and **OWASP Dependency Check** on a Google Cloud Platform (GCP) VM. It is designed to be **idempotent** (skips if already installed) and **self-healing** (recovers automatically if tools are deleted).
