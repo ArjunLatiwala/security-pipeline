@@ -1,85 +1,78 @@
 #!/bin/bash
+set -e # Exit if any command fails
 
-# --- Configuration ---
-DOJO_DIR="/opt/defectdojo"
-DC_DIR="/opt/dependency-check"
-SWAP_FILE="/swapfile"
+echo "===================================================="
+echo "🚀 STARTING SECURITY STACK INSTALLATION/CHECK"
+echo "===================================================="
 
-echo "--- Health Check Started: $(date) ---"
-
-# 1. SWAP CHECK (Self-healing: Creates 4GB Swap if not present)
+# --- 1. SWAP MEMORY ---
+echo "--- [STEP 1/5] VERIFYING SWAP MEMORY (4GB) ---"
 if [ -z "$(swapon --show)" ]; then
-    echo "[!] No Swap detected. Creating 4GB Swap file..."
-    
-    # Create a 4GB file
-    sudo fallocate -l 4G $SWAP_FILE
-    
-    # Secure the file (only root can read/write)
-    sudo chmod 600 $SWAP_FILE
-    
-    # Set up the swap area
-    sudo mkswap $SWAP_FILE
-    
-    # Enable the swap
-    sudo swapon $SWAP_FILE
-    
-    # Make swap permanent (Add to fstab if not already there)
-    if ! grep -q "$SWAP_FILE" /etc/fstab; then
-        echo "$SWAP_FILE none swap sw 0 0" | sudo tee -a /etc/fstab
-    fi
-    echo "[✓] 4GB Swap created and enabled."
+    echo ">> Creating 4GB Swap..."
+    sudo fallocate -l 4G /swapfile
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+    echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab
+    echo ">> ✅ Swap created successfully."
 else
-    echo "[✓] Swap memory is already present."
+    echo ">> ✅ Swap already present."
 fi
+free -h
 
-# 2. DOCKER CHECK (Fastest Install)
+# --- 2. DOCKER & COMPOSE ---
+echo "--- [STEP 2/5] VERIFYING DOCKER & COMPOSE ---"
 if ! command -v docker &> /dev/null; then
-    echo "[!] Docker missing. Installing..."
-    curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh
+    echo ">> Installing Docker..."
+    curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh
 fi
+# Ensure Docker Compose Plugin is installed (Needed for DefectDojo)
+sudo apt-get update && sudo apt-get install -y docker-compose-plugin
+echo ">> ✅ Docker version: $(docker --version)"
 
-# 3. SONARQUBE CHECK (Docker)
-# SonarQube needs this kernel parameter or it will crash on startup
-if [ "$(sysctl -n vm.max_map_count)" -lt "262144" ]; then
-    echo "[!] Setting vm.max_map_count for SonarQube..."
-    sudo sysctl -w vm.max_map_count=262144
-fi
-
-if [ ! "$(docker ps -q -f name=sonarqube)" ]; then
-    echo "[!] SonarQube container not found or stopped. Starting..."
-    # If a container exists but is stopped, remove it first to avoid name conflicts
-    docker rm -f sonarqube > /dev/null 2>&1
-    docker run -d --name sonarqube --restart always -p 9000:9000 sonarqube:lts-community
+# --- 3. SONARQUBE ---
+echo "--- [STEP 3/5] VERIFYING SONARQUBE ---"
+sudo sysctl -w vm.max_map_count=262144
+if [ -z "$(sudo docker ps -q --filter "name=sonarqube")" ]; then
+    echo ">> Starting SonarQube Container..."
+    sudo docker rm -f sonarqube > /dev/null 2>&1 || true
+    sudo docker run -d --name sonarqube --restart always -p 9000:9000 sonarqube:lts-community
+    echo ">> ✅ SonarQube started."
 else
-    echo "[✓] SonarQube is running."
+    echo ">> ✅ SonarQube is already running."
 fi
 
-# 4. DEFECTDOJO CHECK (Docker Compose)
-if [ ! -d "$DOJO_DIR" ]; then
-    echo "[!] DefectDojo folder missing. Cloning..."
-    sudo git clone https://github.com/DefectDojo/django-DefectDojo "$DOJO_DIR"
+# --- 4. DEFECTDOJO ---
+echo "--- [STEP 4/5] VERIFYING DEFECTDOJO ---"
+if [ ! -d "/opt/defectdojo" ]; then
+    echo ">> Cloning DefectDojo..."
+    sudo git clone https://github.com/DefectDojo/django-DefectDojo /opt/defectdojo
 fi
 
-# Check if the main uwsgi container is running
-if [ ! "$(docker ps -q -f name=uwsgi)" ]; then
-    echo "[!] DefectDojo containers not found. Starting..."
-    cd "$DOJO_DIR"
-    # Starting using the provided compose profile
-    sudo ./dc-up.sh mysql-rabbit
+if [ -z "$(sudo docker ps -q --filter "name=uwsgi")" ]; then
+    echo ">> Starting DefectDojo (This pulls many images, please wait)..."
+    cd /opt/defectdojo
+    # We use 'docker compose' directly for better logs
+    sudo docker compose -f docker-compose.yml up -d mysql-rabbit
+    echo ">> ✅ DefectDojo containers initiated."
 else
-    echo "[✓] DefectDojo is running."
+    echo ">> ✅ DefectDojo is already running."
 fi
 
-# 5. DEPENDENCY CHECK (Binary)
+# --- 5. NVD DEPENDENCY CHECK ---
+echo "--- [STEP 5/5] VERIFYING NVD DEPENDENCY CHECK ---"
 if [ ! -f "/usr/local/bin/dependency-check" ]; then
-    echo "[!] Dependency Check missing. Installing..."
-    sudo apt-get update && sudo apt-get install -y unzip openjdk-17-jre-headless wget
+    echo ">> Downloading Dependency Check Binary..."
+    sudo apt-get install -y unzip openjdk-17-jre-headless wget
     wget https://github.com/jeremylong/DependencyCheck/releases/download/v9.0.9/dependency-check-9.0.9-release.zip -P /tmp
-    sudo unzip /tmp/dependency-check-9.0.9-release.zip -d /opt/
-    sudo ln -s /opt/dependency-check/bin/dependency-check.sh /usr/local/bin/dependency-check
-    sudo rm /tmp/dependency-check-9.0.9-release.zip
+    sudo unzip -o /tmp/dependency-check-9.0.9-release.zip -d /opt/
+    sudo ln -sf /opt/dependency-check/bin/dependency-check.sh /usr/local/bin/dependency-check
+    echo ">> ✅ Dependency Check installed."
 else
-    echo "[✓] Dependency Check is installed."
+    echo ">> ✅ Dependency Check already present."
 fi
+dependency-check --version
 
-echo "--- Health Check Completed: $(date) ---"
+echo "===================================================="
+echo "🎉 ALL SYSTEMS VERIFIED AND RUNNING"
+echo "===================================================="

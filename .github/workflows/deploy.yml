@@ -16,22 +16,23 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.GCP_VM_IP }}
-          # REPLACE 'your-username' with the name found at the end of your .pub key
           username: creolemacmini02 
           key: ${{ secrets.GCP_SSH_PRIVATE_KEY }}
           script: |
-            # 1. Install Git (Required because the server is minimized)
-            sudo apt-get update
-            sudo apt-get install -y git
-
-            # 2. Clone or Update the repository
+            # 1. Prepare Server
+            sudo apt-get update && sudo apt-get install -y git
+            
+            # 2. Update code folder
             if [ ! -d "security-pipeline" ]; then
               git clone https://github.com/${{ github.repository }}.git
             fi
-            
             cd security-pipeline
             git pull origin main
 
-            # 3. Run the setup
+            # 3. Setup the Self-Healing Trigger
             chmod +x setup.sh
             sudo ./setup.sh
+
+            # 4. RUN THE INSTALLER INTERACTIVELY (So we see highlights in GitHub)
+            chmod +x scripts/health-check.sh
+            sudo ./scripts/health-check.sh
